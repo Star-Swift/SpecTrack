@@ -1,0 +1,49 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: SUTrack Train",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/tracking/train.py",
+            "args": [
+                "--script", "sutrack",
+                "--config", "sutrack_b224_must_moe",
+                "--save_dir", ".",
+                "--mode", "single"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Python: RGBT Test MGPU",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/RGBT_workspace/test_rgbt_mgpus.py",
+            "args": [
+                "--script_name", "sutrack",
+                "--dataset_name", "MUSTHSI",
+                "--yaml_name", "sutrack_t224_must"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Test MUSTHSI",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/test.py",
+            "args": [
+                "sutrack",
+                "sutrack_b224_must_ihmoe_128_4_2_12",
+                "--dataset", "MUSTHSI",
+                "--threads", "8"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        }
+    ]
+}
