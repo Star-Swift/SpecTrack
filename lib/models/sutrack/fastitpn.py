@@ -393,12 +393,6 @@ class MoCEAdapter(nn.Module):
         gates, top_k_indices, top_k_values, aux_loss = self.routing(x_4d, freq_emb)
         self.aux_loss = aux_loss
 
-        self.routing_info={
-            'gates': gates.detach().cpu().numpy(),
-            'top_k_indices': top_k_indices.detach().cpu().numpy(),
-            'top_k_values': top_k_values.detach().cpu().numpy(),
-            'aux_loss': aux_loss}
-        
         if self.training:
             dispatcher = SparseDispatcher(self.num_experts, gates)
             expert_inputs = dispatcher.dispatch(x_4d)
@@ -898,7 +892,7 @@ class ConvMlpBlock(nn.Module):
 
 
 class PatchEmbed(nn.Module):
-    def __init__(self, img_size=224, patch_size=16, inner_patches=4, in_chans=8, embed_dim=128, norm_layer=None):
+    def __init__(self, img_size=224, patch_size=16, inner_patches=4, in_chans=16, embed_dim=128, norm_layer=None):
         super().__init__()
         img_size = to_2tuple(img_size)
         patch_size = to_2tuple(patch_size)
@@ -934,7 +928,7 @@ class PatchEmbed(nn.Module):
 
 
 class ConvPatchEmbed(nn.Module):
-    def __init__(self, search_size=224,template_size=112, patch_size=16, inner_patches=4, in_chans=8, embed_dim=128, norm_layer=None,
+    def __init__(self, search_size=224,template_size=112, patch_size=16, inner_patches=4, in_chans=16, embed_dim=128, norm_layer=None,
                  stop_grad_conv1=False):
         super().__init__()
         search_size = to_2tuple(search_size)
@@ -1099,7 +1093,7 @@ class DecoupledRelativePositionBias(nn.Module):
 
 
 class Fast_iTPN(nn.Module):
-    def __init__(self, search_size=224,template_size=112, patch_size=16, in_chans=8, embed_dim=512, depth_stage1=3, depth_stage2=3, depth=24,
+    def __init__(self, search_size=224,template_size=112, patch_size=16, in_chans=16, embed_dim=512, depth_stage1=3, depth_stage2=3, depth=24,
                  num_heads=8, bridge_mlp_ratio=3., mlp_ratio=4., qkv_bias=True, qk_scale=None, drop_rate=0.,
                  attn_drop_rate=0., drop_path_rate=0.0, init_values=None, attn_head_dim=None, norm_layer=nn.LayerNorm,
                  patch_norm=False, num_classes=1000, use_mean_pooling=False,
@@ -1694,7 +1688,7 @@ def load_pretrained(model, checkpoint, pos_type, patchembed_init):
 @register_model
 def fastitpnt(pretrained=False, pos_type="interpolate", pretrain_type="", patchembed_init="copy", **kwargs):
     model = Fast_iTPN(
-        patch_size=16, in_chans=8, embed_dim=384, depth_stage1=1, depth_stage2=1, depth=12, num_heads=6, bridge_mlp_ratio=3.,
+        patch_size=16, in_chans=16, embed_dim=384, depth_stage1=1, depth_stage2=1, depth=12, num_heads=6, bridge_mlp_ratio=3.,
         mlp_ratio=3., qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6),
         convmlp=True,
         naiveswiglu=True,
@@ -1711,7 +1705,7 @@ def fastitpnt(pretrained=False, pos_type="interpolate", pretrain_type="", patche
 @register_model
 def fastitpns(pretrained=False, pos_type="interpolate", pretrain_type="", patchembed_init="copy", **kwargs):
     model = Fast_iTPN(
-        patch_size=16, in_chans=8, embed_dim=384, depth_stage1=2, depth_stage2=2, depth=20, num_heads=6, bridge_mlp_ratio=3.,
+        patch_size=16, in_chans=16, embed_dim=384, depth_stage1=2, depth_stage2=2, depth=20, num_heads=6, bridge_mlp_ratio=3.,
         mlp_ratio=3., qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6),
         convmlp=True,
         naiveswiglu=True,
@@ -1728,7 +1722,7 @@ def fastitpns(pretrained=False, pos_type="interpolate", pretrain_type="", patche
 @register_model
 def fastitpnb(pretrained=False, pos_type="interpolate", pretrain_type="", patchembed_init="copy", **kwargs):
     model = Fast_iTPN(
-        patch_size=16, in_chans=8, embed_dim=512, depth_stage1=3, depth_stage2=3, depth=24, num_heads=8, bridge_mlp_ratio=3.,
+        patch_size=16, in_chans=16, embed_dim=512, depth_stage1=3, depth_stage2=3, depth=24, num_heads=8, bridge_mlp_ratio=3.,
         mlp_ratio=3., qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6),
         convmlp=True,
         naiveswiglu=True,
@@ -1745,7 +1739,7 @@ def fastitpnb(pretrained=False, pos_type="interpolate", pretrain_type="", patche
 @register_model
 def fastitpnl(pretrained=False, pos_type="interpolate", pretrain_type="", patchembed_init="copy", **kwargs):
     model = Fast_iTPN(
-        patch_size=16, in_chans=8, embed_dim=768, depth_stage1=2, depth_stage2=2, depth=40, num_heads=12, bridge_mlp_ratio=3.,
+        patch_size=16, in_chans=16, embed_dim=768, depth_stage1=2, depth_stage2=2, depth=40, num_heads=12, bridge_mlp_ratio=3.,
         mlp_ratio=3., qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6),
         convmlp=True,
         naiveswiglu=True,

@@ -30,3 +30,9 @@ def evaluate_moe_health(model, val_loader, device):
     print(f"Coefficient of Variation (CV): {cv:.4f}")
     
     return cv, all_expert_counts
+
+if __name__ == "__main__":
+    # 示例用法（假设 model 和 val_loader 已定义）
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    from lib.models.sutrack import build_sutrack
+    model = build_sutrack

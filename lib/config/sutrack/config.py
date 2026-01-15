@@ -15,7 +15,7 @@ cfg.MODEL.TASK_NUM=1 #should be the largest index number + 1
 cfg.MODEL.TASK_INDEX = edict() # index for tasks
 cfg.MODEL.TASK_INDEX.MUSTHSI = 0
 cfg.MODEL.TASK_INDEX.MSITrack = 0
-cfg.MODEL.TASK_INDEX.MSITRACK = 0
+cfg.MODEL.TASK_INDEX.HOT2022 = 0
 
 # MODEL.LANGUAGE
 cfg.MODEL.TEXT_ENCODER = edict()

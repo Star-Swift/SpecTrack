@@ -11,7 +11,8 @@ conda activate must
 # CUDA_VISIBLE_DEVICES=0 python tracking/train.py --script sutrack --config sutrack_b224_msi_ihmoe_32_4_2_12_yfj --save_dir . --mode single
 
 
-CUDA_VISIBLE_DEVICES=0 python tracking/train.py --script sutrack --config sutrack_b224_must_ihmoe --save_dir . --mode single
+# CUDA_VISIBLE_DEVICES=0 python tracking/train.py --script sutrack --config sutrack_b224_must_ihmoe --save_dir . --mode single
+python tracking/train.py --script sutrack --config hot2022 --save_dir . --mode single
 # 批量测试 + 自动评估（写入当天日志）
 # 用法示例：
 #   bash testval.sh --param sutrack_b224_must_ihmoe --dataset MUSTHSI --gpu 0 --threads 20

@@ -6,16 +6,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "$REPO_ROOT"
 
-PARAM="sutrack_b224_must_ihmoe"
-DATASET="MUSTHSI"
-GPU="0"
-THREADS="20"
+PARAM="${PARAM:-sutrack_l224_must_ihmoe}"   # 可通过环境变量或 --param 覆盖，方便 CI/自动化
+DATASET="${DATASET:-MUSTHSI}"
+GPU="${GPU:-0}"
+THREADS="${THREADS:-8}"
 FORCE=0
 DO_TEST=1
 DO_EVAL=1
 CKPT_DIR=""
 LOG_DATE="$(date +%F)"
-LOG_FILE="$REPO_ROOT/testval_${LOG_DATE}.txt"
+# 让日志文件名包含 param，避免多任务并行时日志混淆
+LOG_FILE="$REPO_ROOT/testval_${PARAM}_${LOG_DATE}.txt"
 
 usage() {
   cat <<'EOF'
@@ -78,9 +79,13 @@ for ckpt in "${CKPTS[@]}"; do
   ep_num=$((10#$ep))
   results_dir="$REPO_ROOT/test/tracking_results/sutrack/${PARAM}/epoch_${ep_num}"
 
+  # 如果不是强制模式，且结果目录存在且非空
   if [[ $FORCE -eq 0 && -d "$results_dir" && -n "$(ls -A "$results_dir" 2>/dev/null || true)" ]]; then
-    echo "[SKIP] epoch_${ep_num} results exist: $results_dir" | tee -a "$LOG_FILE"
-    continue
+    # 如果是 eval_only 模式，即使结果存在也要继续（为了跑下面的 eval）
+    if [[ $DO_TEST -eq 1 ]]; then
+      echo "[SKIP] epoch_${ep_num} results exist: $results_dir" | tee -a "$LOG_FILE"
+      continue
+    fi
   fi
 
   echo "------------------------------------------------------------" | tee -a "$LOG_FILE"
@@ -96,12 +101,7 @@ for ckpt in "${CKPTS[@]}"; do
 
   if [[ $DO_EVAL -eq 1 ]]; then
     echo "[EVAL] python tracking/analysis_results.py --dataset_name $DATASET --tracker_param $PARAM --results_dir $results_dir --epoch $ep_num" | tee -a "$LOG_FILE"
-    python tracking/analysis_results.py \
-      --dataset_name "$DATASET" \
-      --tracker_param "$PARAM" \
-      --results_dir "$results_dir" \
-      --epoch "$ep_num" \
-      --force_evaluation 1 2>&1 | tee -a "$LOG_FILE"
+    python tracking/analysis_results.py --dataset_name "$DATASET" --tracker_param "$PARAM" --results_dir "$results_dir" --epoch "$ep_num" --force_evaluation 1 2>&1 | tee -a "$LOG_FILE"
   fi
 done
 

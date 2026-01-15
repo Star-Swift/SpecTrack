@@ -1,0 +1,12 @@
+============================================================
+[RUN] 2026-01-15 16:56:58
+[CFG] param=hot2022_b224 dataset=HOT2022 gpu=0 threads=16 ckpt_dir=/root/autodl-tmp/SUTrack-moe/checkpoints/train/sutrack/hot2022_b224 force=0 test=1 eval=1
+------------------------------------------------------------
+[CKPT] /root/autodl-tmp/SUTrack-moe/checkpoints/train/sutrack/hot2022_b224/SUTRACK_ep0001.pth.tar
+[EPOCH] 1
+[TEST] CUDA_VISIBLE_DEVICES=0 python test.py sutrack hot2022_b224 --dataset_name HOT2022 --threads 16 --num_gpus 1 --epoch 1
+usage: test.py [-h] [--runid RUNID] [--dataset_name DATASET_NAME]
+               [--sequence SEQUENCE] [--debug DEBUG] [--threads THREADS]
+               [--num_gpus NUM_GPUS]
+               tracker_name tracker_param
+test.py: error: unrecognized arguments: --epoch 1

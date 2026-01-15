@@ -1,7 +1,6 @@
 import os
 import sys
 import argparse
-import pickle
 
 env_path = os.path.join(os.path.dirname(__file__), '../..')
 if env_path not in sys.path:
@@ -35,8 +34,6 @@ def run_tracker(tracker_name, tracker_param, run_id=None, dataset_name='otb', se
     run_dataset(dataset, trackers, debug, threads, num_gpus=num_gpus)
 
 
-
-
 def main():
     parser = argparse.ArgumentParser(description='Run tracker on sequence or dataset.')
     parser.add_argument('tracker_name', type=str, help='Name of tracking method.')
@@ -66,6 +63,4 @@ def main():
 
 
 if __name__ == '__main__':
-    import pathlib
-    pathlib.Path('moeeval').mkdir(parents=True, exist_ok=True)
     main()

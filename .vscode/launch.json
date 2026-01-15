@@ -8,7 +8,7 @@
             "program": "${workspaceFolder}/tracking/train.py",
             "args": [
                 "--script", "sutrack",
-                "--config", "sutrack_b224_must_moe",
+                "--config", "hot2022_b224",
                 "--save_dir", ".",
                 "--mode", "single"
             ],
@@ -37,9 +37,9 @@
             "program": "${workspaceFolder}/test.py",
             "args": [
                 "sutrack",
-                "sutrack_b224_must_ihmoe_128_4_2_12",
-                "--dataset", "MUSTHSI",
-                "--threads", "8"
+                "hot2022_b224",
+                "--dataset", "HOT2022",
+                "--threads", "0"
             ],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
