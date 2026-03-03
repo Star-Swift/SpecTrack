@@ -38,6 +38,8 @@ cfg.MODEL.ENCODER.MOCE_RANK = 64    # 专家内部降维维度
 cfg.MODEL.ENCODER.MOCE_NUM_EXPERTS = 4  # 专家数量
 cfg.MODEL.ENCODER.MOCE_TOP_K = 2    # 每次激活的专家数
 cfg.MODEL.ENCODER.MOCE_START_LAYER = 0  # 从第几层开始使用MoCE（Stage3内）
+cfg.MODEL.ENCODER.MOCE_TOKEN_ROUTING = True  # 是否启用token级别细粒度路由（vs. 图像级路由）
+cfg.MODEL.ENCODER.MOCE_ORTH_WEIGHT = 0.1    # 专家正交多样性正则化权重
 
 # MODEL.DECODER
 cfg.MODEL.DECODER = edict()
