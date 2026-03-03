@@ -258,6 +258,75 @@ class HighPassConv2d(nn.Module):
         return self.conv(x)
 
 
+class SpectralBandAttention(nn.Module):
+    """
+    跨波段光谱注意力模块 (Cross-Band Spectral Attention).
+
+    论文核心主张（图1）：多光谱图像中不同波段捕获材质相关的反射率特性，
+    这些跨波段关联是区分目标与背景的关键判别线索。
+
+    当前 ConvPatchEmbed 直接用 Conv2d 将全部波段混合投影，隐式地处理跨波段关联
+    但丢失了显式的波段间相关结构（例如：目标在近红外波段与背景的反射率差异）。
+
+    本模块在块嵌入之前对原始 in_chans 通道（波长波段）建模显式的跨波段反射率关联：
+    1. 全局波段重标定（SE 风格）：学习各波段对目标识别的贡献权重
+    2. 跨波段局部混合：通过逐通道卷积+逐点卷积捕获相邻波段之间的反射率协变模式
+
+    论文改进意义：
+    - 强化"频率感知光谱线索"的真实光谱语义，而非仅依赖空间高频特征
+    - 在特征嵌入阶段就保留波段间关联，为 SHMoE 路由器提供更准确的光谱线索
+
+    参考文献：
+    - SENet: Squeeze-and-Excitation Networks (Hu et al., CVPR 2018)
+    - Spectral–Spatial Feature Extraction for Hyperspectral Object Tracking (TGRS 2022)
+    - Band Attention Convolutional Networks for HSI Classification (TGRS 2020)
+    """
+
+    def __init__(self, in_chans: int, reduction: int = 2):
+        super().__init__()
+        mid = max(in_chans // reduction, 2)
+
+        # Global band recalibration (SE-style): learn per-band importance weights
+        self.squeeze = nn.AdaptiveAvgPool2d(1)
+        self.excitation = nn.Sequential(
+            nn.Linear(in_chans, mid, bias=False),
+            nn.GELU(),
+            nn.Linear(mid, in_chans, bias=False),
+            nn.Sigmoid()
+        )
+
+        # Cross-band mixing: depthwise captures local spatial patterns per band,
+        # pointwise mixes information across all bands to model reflectance correlations
+        self.band_conv = nn.Sequential(
+            nn.Conv2d(in_chans, in_chans, kernel_size=3, padding=1, groups=in_chans, bias=False),
+            nn.GELU(),
+            nn.Conv2d(in_chans, in_chans, kernel_size=1, bias=False),
+        )
+
+        # Layer-normalize across all bands (GroupNorm with 1 group = LayerNorm over channels)
+        # stabilizes scale differences across spectral bands
+        self.norm = nn.GroupNorm(1, in_chans)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: [B, in_chans, H, W] raw multispectral image
+        Returns:
+            [B, in_chans, H, W] spectrally-recalibrated features
+        """
+        B, C, H, W = x.shape
+
+        # Band recalibration: learn per-band importance weights from global context
+        s = self.squeeze(x).view(B, C)             # [B, C]
+        e = self.excitation(s).view(B, C, 1, 1)    # [B, C, 1, 1]
+        x_recalib = x * e                          # Recalibrate each band
+
+        # Cross-band mixing: capture reflectance co-variation across wavelengths
+        x_out = x_recalib + self.band_conv(x_recalib)
+
+        return self.norm(x_out)
+
+
 class FrequencyEmbedding(nn.Module):
     """频率嵌入：提取高频特征作为路由依据"""
     def __init__(self, dim):
@@ -332,6 +401,104 @@ class RoutingFunction(nn.Module):
         return (p_mean_std / (p_mean_mean + 1e-8)) ** 2
 
 
+class TokenAwareRoutingFunction(nn.Module):
+    """
+    细粒度Token级别路由函数 (Token-Aware Routing for SHMoE).
+
+    动机与改进：
+    原始 RoutingFunction 使用全局平均池化，对整张图像产生唯一的路由决策——
+    这意味着图像中所有空间位置（tokens）都被分配到相同的专家集合。
+    这与 SpecTrack 的核心主张（不同区域的判别难度不同）存在根本矛盾。
+
+    本模块对每个空间 token 独立计算路由权重，使易背景 token 路由到轻量专家，
+    而目标边界、光谱相似干扰体等难 token 路由到重型专家，实现真正细粒度的
+    自适应容量分配。
+
+    改进细节：
+    1. 每个 token 独立路由（1x1 conv 保留空间结构，不做全局池化）
+    2. 融合局部高频特征（本地边缘响应指示硬区域）
+    3. Per-token 负载均衡辅助损失（Switch Transformer 风格）
+    4. 复杂度感知偏置：高复杂度专家倾向接收高频难 token
+
+    参考文献：
+    - Switch Transformer (Fedus et al., JMLR 2022)
+    - From Sparse to Soft Mixtures of Experts (Puigcerver et al., ICLR 2024)
+    - MoE-I2I: Mixture of Experts for Image-to-Image (NeurIPS 2024)
+    """
+
+    def __init__(self, dim, num_experts, k, complexity, complexity_scale="max",
+                 noise_std_factor=1.0):
+        super(TokenAwareRoutingFunction, self).__init__()
+        self.num_experts = num_experts
+        self.k = k
+        self.noise_std = (1.0 / num_experts) * noise_std_factor
+
+        # Per-token spatial gate: 1x1 conv preserves spatial layout (no global pooling)
+        self.token_gate = nn.Conv2d(dim, num_experts, kernel_size=1, bias=False)
+
+        # Per-token frequency-aware gate: local high-frequency features guide routing
+        # High-frequency regions (edges, boundaries) indicate hard tokens
+        self.freq_gate = nn.Sequential(
+            HighPassConv2d(dim, freeze=True),
+            nn.GELU(),
+            nn.Conv2d(dim, num_experts, kernel_size=1, bias=False)
+        )
+
+        # Complexity bias: heavier experts are preferred for complex (high-freq) tokens
+        if complexity_scale == "min":
+            complexity = complexity / complexity.min()
+        elif complexity_scale == "max":
+            complexity = complexity / complexity.max()
+        self.register_buffer('complexity', complexity)
+
+    def forward(self, x_4d):
+        """
+        Args:
+            x_4d: [B, C, H, W] search region features
+        Returns:
+            top_k_weights: [B, H*W, k] normalized per-token routing weights
+            top_k_indices: [B, H*W, k] per-token expert indices (long)
+            aux_loss: scalar load-balancing loss
+        """
+        B, C, H, W = x_4d.shape
+
+        # Per-token logits: [B, num_experts, H, W]
+        spatial_logits = self.token_gate(x_4d)
+        freq_logits = self.freq_gate(x_4d)
+        logits = spatial_logits + freq_logits  # [B, num_experts, H, W]
+
+        # Rearrange to [B, H*W, num_experts]
+        logits = logits.permute(0, 2, 3, 1).reshape(B, H * W, self.num_experts)
+
+        aux_loss = 0
+        if self.training:
+            probs = logits.softmax(dim=-1)  # [B, H*W, num_experts]
+            # Per-token load balancing loss (Switch Transformer Eq. 4):
+            # L_lb = n_experts * sum_e(f_e * p_e), where
+            # f_e = fraction of tokens dispatched to expert e (indicator of top-k)
+            # p_e = mean routing probability for expert e
+            with torch.no_grad():
+                top_k_mask = torch.zeros_like(probs)
+                _, tk_idx = probs.topk(self.k, dim=-1)
+                top_k_mask.scatter_(-1, tk_idx, 1.0 / self.k)
+            f_e = top_k_mask.mean(dim=(0, 1))   # [num_experts] fraction of tokens per expert
+            p_e = probs.mean(dim=(0, 1))         # [num_experts] mean routing probability
+            aux_loss = self.num_experts * (f_e * p_e).sum()
+
+            # Exploration noise
+            noise = torch.randn_like(logits) * self.noise_std
+            logits = logits + noise
+
+        # Per-token top-k selection
+        probs = logits.softmax(dim=-1)  # [B, H*W, num_experts]
+        top_k_values, top_k_indices = probs.topk(self.k, dim=-1)  # [B, H*W, k]
+
+        # Normalize weights to sum to 1 per token for stable weighted combination
+        top_k_weights = top_k_values / (top_k_values.sum(dim=-1, keepdim=True) + 1e-8)
+
+        return top_k_weights, top_k_indices, aux_loss
+
+
 class MoCEAdapter(nn.Module):
     """
     复杂度混合专家适配层（MoCE Adapter）
@@ -339,16 +506,20 @@ class MoCEAdapter(nn.Module):
         1. 多复杂度专家：专家间深度、补丁尺寸、核大小不同
         2. 动态路由：结合空间+频域特征生成门控
         3. 稀疏激活：仅激活top-k专家
+        4. [新增] Token级别细粒度路由（use_token_routing=True）
+        5. [新增] 专家正交多样性正则化（compute_orthogonal_loss）
     """
     def __init__(self, dim: int, rank: int = 64, num_experts: int = 4, top_k: int = 2,
                  expert_layer: nn.Module = FFTAttention, stage_depth: int = 1,
                  depth_type: str = "constant", freq_dim: int = None,
-                 with_complexity: bool = True, complexity_scale: str = "max"):
+                 with_complexity: bool = True, complexity_scale: str = "max",
+                 use_token_routing: bool = True):
         super().__init__()
 
         self.top_k = top_k
         self.num_experts = num_experts
         self.aux_loss = None
+        self.use_token_routing = use_token_routing
         freq_dim = freq_dim or dim
 
         patch_sizes = [2 ** (i + 2) for i in range(num_experts)]
@@ -363,7 +534,6 @@ class MoCEAdapter(nn.Module):
 
         ranks = [rank for _ in range(num_experts)]
 
-        self.freq_embed = FrequencyEmbedding(dim)
         self.shared_attn = SharedAttention(dim, num_heads=max(1, dim // 64))
 
         self.experts = nn.ModuleList([
@@ -373,9 +543,94 @@ class MoCEAdapter(nn.Module):
 
         self.proj_out = nn.Conv2d(dim, dim, kernel_size=1, padding=0, bias=False)
         expert_complexity = torch.tensor([sum(p.numel() for p in expert.parameters()) for expert in self.experts])
-        self.routing = RoutingFunction(dim, freq_dim, num_experts=num_experts, k=top_k,
-                                        complexity=expert_complexity, use_complexity_bias=with_complexity,
-                                        complexity_scale=complexity_scale)
+
+        if self.use_token_routing:
+            # Fine-grained token-level routing
+            self.token_routing = TokenAwareRoutingFunction(
+                dim, num_experts=num_experts, k=top_k,
+                complexity=expert_complexity, complexity_scale=complexity_scale
+            )
+        else:
+            # Original image-level routing (legacy)
+            self.freq_embed = FrequencyEmbedding(dim)
+            self.routing = RoutingFunction(dim, freq_dim, num_experts=num_experts, k=top_k,
+                                           complexity=expert_complexity,
+                                           use_complexity_bias=with_complexity,
+                                           complexity_scale=complexity_scale)
+
+    def compute_orthogonal_loss(self):
+        """
+        专家正交多样性正则化损失。
+
+        通过惩罚专家投影权重之间的相似性，鼓励每个专家学习不同的特征模式，
+        防止专家坍缩（所有专家收敛到相同的函数）。
+
+        L_orth = mean_{i≠j} ||W_i W_j^T||_F^2 / (rank^2)
+
+        使用批量矩阵乘法高效计算所有专家对的正交损失：
+        W: [num_experts, rank, dim] -> Gram: [num_experts, num_experts, rank, rank]
+
+        参考文献：
+        - Regularizing Mixture of Experts via Orthogonality (Chen et al., AAAI 2022)
+        - Diversifying Expert Routing (Shi et al., EMNLP 2023)
+        """
+        expert_weights = []
+        for expert_seq in self.experts:
+            for module in expert_seq:
+                if hasattr(module, 'proj') and len(module.proj) > 0:
+                    w = module.proj[0].weight   # [rank, dim, 1, 1] (Conv2d weight)
+                    w = w.view(w.size(0), -1)   # [rank, dim]
+                    expert_weights.append(F.normalize(w, dim=1))
+                    break
+
+        if len(expert_weights) < 2:
+            return torch.tensor(0.0, device=self.proj_out.weight.device)
+
+        # Stack all expert weights: [num_experts, rank, dim]
+        W = torch.stack(expert_weights, dim=0)
+        # Batch Gram matrix: [num_experts, num_experts, rank, rank]
+        gram_batch = torch.einsum('irc,jsc->ijrs', W, W)
+        # Penalize off-diagonal blocks (i != j) by zeroing out diagonal blocks
+        E = gram_batch.size(0)
+        mask = 1 - torch.eye(E, device=W.device).view(E, E, 1, 1)
+        orth_loss = (gram_batch.pow(2) * mask).mean()
+        return orth_loss
+
+    def _token_routing_forward(self, x_4d, shared):
+        """
+        Token-level MoE forward pass.
+
+        Each spatial token independently selects its top-k experts based on
+        local spectral-spatial complexity. Expert outputs are computed for the
+        full spatial map and then combined with per-token routing weights.
+        """
+        B, C, H, W = x_4d.shape
+
+        top_k_weights, top_k_indices, aux_loss = self.token_routing(x_4d)
+        self.aux_loss = aux_loss
+
+        # Compute all expert outputs over the full spatial map [B, C, H, W]
+        expert_outs = torch.stack(
+            [self.experts[i](x_4d, shared) for i in range(self.num_experts)],
+            dim=1  # [B, num_experts, C, H, W]
+        )
+
+        # Rearrange: [B, num_experts, C, H*W] -> [B, H*W, num_experts, C]
+        N = H * W
+        expert_outs_flat = expert_outs.reshape(B, self.num_experts, C, N).permute(0, 3, 1, 2)
+
+        # Per-token top-k gather: [B, H*W, k, C]
+        gathered = torch.gather(
+            expert_outs_flat,
+            dim=2,
+            index=top_k_indices.unsqueeze(-1).expand(-1, -1, -1, C)
+        )
+
+        # Weighted combination: [B, H*W, C]
+        output_flat = (gathered * top_k_weights.unsqueeze(-1)).sum(dim=2)
+
+        # Reshape back to 4D: [B, C, H, W]
+        return output_flat.permute(0, 2, 1).reshape(B, C, H, W)
 
     def forward(self, x, H, W):
         """
@@ -383,28 +638,29 @@ class MoCEAdapter(nn.Module):
         输出: x [B, L, C]
         """
         B, L, C = x.shape
-        
-        
         x_4d = x.transpose(1, 2).reshape(B, C, H, W)
-
-        freq_emb = self.freq_embed(x_4d)
         shared = self.shared_attn(x_4d)
 
-        gates, top_k_indices, top_k_values, aux_loss = self.routing(x_4d, freq_emb)
-        self.aux_loss = aux_loss
-
-        if self.training:
-            dispatcher = SparseDispatcher(self.num_experts, gates)
-            expert_inputs = dispatcher.dispatch(x_4d)
-            expert_shared = dispatcher.dispatch(shared)
-            expert_outputs = [self.experts[i](expert_inputs[i], expert_shared[i]) for i in range(self.num_experts)]
-            out = dispatcher.combine(expert_outputs, multiply_by_gates=True)
+        if self.use_token_routing:
+            out = self._token_routing_forward(x_4d, shared)
         else:
-            selected_experts = [self.experts[i] for i in top_k_indices.squeeze(0)]
-            expert_outputs = torch.stack([exp(x_4d, shared) for exp in selected_experts], dim=1)
-            gates_selected = gates.gather(1, top_k_indices)
-            weighted = gates_selected.unsqueeze(2).unsqueeze(3).unsqueeze(4) * expert_outputs
-            out = weighted.sum(dim=1)
+            # Legacy image-level routing
+            freq_emb = self.freq_embed(x_4d)
+            gates, top_k_indices, top_k_values, aux_loss = self.routing(x_4d, freq_emb)
+            self.aux_loss = aux_loss
+
+            if self.training:
+                dispatcher = SparseDispatcher(self.num_experts, gates)
+                expert_inputs = dispatcher.dispatch(x_4d)
+                expert_shared = dispatcher.dispatch(shared)
+                expert_outputs = [self.experts[i](expert_inputs[i], expert_shared[i]) for i in range(self.num_experts)]
+                out = dispatcher.combine(expert_outputs, multiply_by_gates=True)
+            else:
+                selected_experts = [self.experts[i] for i in top_k_indices.squeeze(0)]
+                expert_outputs = torch.stack([exp(x_4d, shared) for exp in selected_experts], dim=1)
+                gates_selected = gates.gather(1, top_k_indices)
+                weighted = gates_selected.unsqueeze(2).unsqueeze(3).unsqueeze(4) * expert_outputs
+                out = weighted.sum(dim=1)
 
         out = self.proj_out(out)
         out = out.flatten(2).transpose(1, 2)  # [B, C, H, W] -> [B, L, C]
@@ -673,6 +929,7 @@ class Block(nn.Module):
                  moce_rank=64,
                  moce_num_experts=4,
                  moce_top_k=2,
+                 moce_token_routing=True,
                  num_patches_search=196,  # 新增：search patches 数量
                  ):
         super().__init__()
@@ -711,7 +968,8 @@ class Block(nn.Module):
         self.use_moce = use_moce and with_attn
         self.num_patches_search = num_patches_search
         if self.use_moce:
-            self.moce = MoCEAdapter(dim=dim, rank=moce_rank, num_experts=moce_num_experts, top_k=moce_top_k)
+            self.moce = MoCEAdapter(dim=dim, rank=moce_rank, num_experts=moce_num_experts, top_k=moce_top_k,
+                                    use_token_routing=moce_token_routing)
             self.moce_scale = nn.Parameter(torch.zeros(1))  # 可学习缩放因子，初始为0
 
         if init_values is not None and init_values > 0:
@@ -929,7 +1187,7 @@ class PatchEmbed(nn.Module):
 
 class ConvPatchEmbed(nn.Module):
     def __init__(self, search_size=224,template_size=112, patch_size=16, inner_patches=4, in_chans=8, embed_dim=128, norm_layer=None,
-                 stop_grad_conv1=False):
+                 stop_grad_conv1=False, use_spectral_attn=False):
         super().__init__()
         search_size = to_2tuple(search_size)
         template_size = to_2tuple(template_size)
@@ -956,8 +1214,17 @@ class ConvPatchEmbed(nn.Module):
         else:
             self.norm = None
 
+        # Cross-band spectral attention: explicitly models wavelength-dependent
+        # reflectance patterns before spatial patch projection
+        self.spectral_attn = SpectralBandAttention(in_chans) if use_spectral_attn else None
+
     def forward(self, x, bool_masked_pos=None, mask_token=None):
         B, C, H, W = x.shape
+
+        # Apply cross-band spectral recalibration before spatial projection
+        if self.spectral_attn is not None:
+            x = self.spectral_attn(x)
+
         x = self.proj(x)
         if self.stop_grad_conv1:
             x = x.detach() * 0.9 + x * 0.1
@@ -1117,6 +1384,9 @@ class Fast_iTPN(nn.Module):
                  moce_num_experts=4,
                  moce_top_k=2,
                  moce_start_layer=0,
+                 moce_token_routing=True,
+                 moce_orth_weight=0.1,
+                 use_spectral_attn=False,
                  **kwargs):
         super().__init__()
         self.search_size = search_size
@@ -1143,6 +1413,8 @@ class Fast_iTPN(nn.Module):
         self.moce_num_experts = moce_num_experts
         self.moce_top_k = moce_top_k
         self.moce_start_layer = moce_start_layer
+        self.moce_token_routing = moce_token_routing
+        self.moce_orth_weight = moce_orth_weight
 
         mlvl_dims = {'4': embed_dim // 4, '8': embed_dim // 2, '16': embed_dim}
         # split image into non-overlapping patches
@@ -1150,7 +1422,8 @@ class Fast_iTPN(nn.Module):
             self.patch_embed = ConvPatchEmbed(
                 search_size=search_size,template_size=template_size, patch_size=patch_size, in_chans=in_chans, embed_dim=mlvl_dims['4'],
                 stop_grad_conv1=stop_grad_conv1,
-                norm_layer=norm_layer if patch_norm else None)
+                norm_layer=norm_layer if patch_norm else None,
+                use_spectral_attn=use_spectral_attn)
         else:
             self.patch_embed = PatchEmbed(
                 img_size=search_size, patch_size=patch_size, in_chans=in_chans, embed_dim=mlvl_dims['4'],
@@ -1361,20 +1634,29 @@ class Fast_iTPN(nn.Module):
                     moce_rank=self.moce_rank,
                     moce_num_experts=self.moce_num_experts,
                     moce_top_k=self.moce_top_k,
+                    moce_token_routing=self.moce_token_routing,
                     num_patches_search=self.num_patches_search,  # 传递 search patches 数量
                 )
             )
 
     def get_moce_aux_loss(self):
-        """获取所有MoCE层的辅助损失"""
+        """获取所有MoCE层的辅助损失（路由负载均衡 + 专家正交多样性）"""
         aux_loss = 0
-        count = 0
+        orth_loss = 0
+        lb_count = 0
+        od_count = 0
         for blk in self.blocks:
             if hasattr(blk, 'use_moce') and blk.use_moce and hasattr(blk, 'moce'):
                 if blk.moce.aux_loss is not None:
                     aux_loss = aux_loss + blk.moce.aux_loss
-                    count += 1
-        return aux_loss / max(count, 1)
+                    lb_count += 1
+                # Orthogonal diversity loss to prevent expert collapse
+                if hasattr(blk.moce, 'compute_orthogonal_loss') and self.training:
+                    orth_loss = orth_loss + blk.moce.compute_orthogonal_loss()
+                    od_count += 1
+        lb_loss = aux_loss / max(lb_count, 1)
+        od_loss = orth_loss / max(od_count, 1)
+        return lb_loss + self.moce_orth_weight * od_loss
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):

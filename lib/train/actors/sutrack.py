@@ -15,6 +15,8 @@ class SUTrack_Actor(BaseActor):
         self.multi_modal_language = cfg.DATA.MULTI_MODAL_LANGUAGE
         # MoCE辅助损失权重
         self.moce_aux_weight = getattr(cfg.TRAIN, 'MOCE_AUX_WEIGHT', 0.01)
+        # 光谱对比损失权重
+        self.spectral_contrastive_weight = getattr(cfg.TRAIN, 'SPECTRAL_CONTRASTIVE_WEIGHT', 0.0)
 
     def __call__(self, data):
         """
@@ -59,6 +61,7 @@ class SUTrack_Actor(BaseActor):
         task_class_output = task_class_output.view(-1, task_class_output.size(-1))
         outputs['task_class'] = task_class_output
         outputs['task_class_label'] = task_index_batch
+        outputs['enc_opt'] = enc_opt
 
         return outputs
 
@@ -101,12 +104,23 @@ class SUTrack_Actor(BaseActor):
                 if not isinstance(moce_aux_loss, torch.Tensor):
                     moce_aux_loss = torch.tensor(moce_aux_loss, device=l1_loss.device)
 
+        # compute spectral contrastive loss
+        spectral_loss = torch.tensor(0.0, device=l1_loss.device)
+        if self.training and self.spectral_contrastive_weight > 0:
+            net = self.net.module if multigpu.is_multi_gpu(self.net) else self.net
+            if hasattr(net, 'compute_spectral_contrastive_loss') and 'enc_opt' in pred_dict:
+                spectral_loss = net.compute_spectral_contrastive_loss(
+                    pred_dict['enc_opt'],
+                    gt_gaussian_maps.squeeze(1)  # [B, H, W] at patch resolution
+                )
+
         # weighted sum
         loss = (self.loss_weight['giou'] * giou_loss +
                 self.loss_weight['l1'] * l1_loss +
                 self.loss_weight['focal'] * location_loss +
                 self.loss_weight['task_cls'] * task_cls_loss +
-                self.moce_aux_weight * moce_aux_loss)
+                self.moce_aux_weight * moce_aux_loss +
+                self.spectral_contrastive_weight * spectral_loss)
 
         if return_status:
             # status for log
@@ -117,6 +131,7 @@ class SUTrack_Actor(BaseActor):
                       "Loss/location": location_loss.item(),
                       "Loss/task_class": task_cls_loss.item(),
                       "Loss/moce_aux": moce_aux_loss.item() if isinstance(moce_aux_loss, torch.Tensor) else moce_aux_loss,
+                      "Loss/spectral_contrast": spectral_loss.item(),
                       "IoU": mean_iou.item()}
             return loss, status
         else:

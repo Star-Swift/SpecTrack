@@ -1,0 +1,111 @@
+DATA:
+  MAX_SAMPLE_INTERVAL: 400
+  MULTI_MODAL_LANGUAGE: True
+  MULTI_MODAL_VISION: True
+  MEAN:
+  - 0.449
+  - 0.328
+  - 0.326
+  - 0.322
+  - 0.328
+  - 0.324
+  - 0.326
+  - 0.327
+  SEARCH:
+    CENTER_JITTER: 3.5
+    FACTOR: 4.0
+    SCALE_JITTER: 0.5
+    SIZE: 224
+    NUMBER: 1
+  STD:
+  - 0.236
+  - 0.173
+  - 0.171
+  - 0.170
+  - 0.176
+  - 0.157
+  - 0.162
+  - 0.164
+  TEMPLATE:
+    CENTER_JITTER: 0
+    FACTOR: 2.0
+    SCALE_JITTER: 0
+    SIZE: 112
+    NUMBER: 2
+  TRAIN:
+    DATASETS_NAME:
+    - MUSTHSI
+    DATASETS_RATIO:
+    - 1
+    SAMPLE_PER_EPOCH: 100000
+  USE_NLP:
+    TNL2K: True
+MODEL:
+  ENCODER:
+    TYPE: fastitpnb
+    STRIDE: 16
+    PRETRAIN_TYPE: 'pretrained/itpn/fast_itpn_base_clipl_e1600.pt'
+    PATCHEMBED_INIT: insert_halfcopy
+    DROP_PATH: 0.1
+    TOKEN_TYPE_INDICATE: True
+    USE_MOCE: True            # Enable SHMoE
+    MOCE_RANK: 64             # Expert internal bottleneck dimension
+    MOCE_NUM_EXPERTS: 4       # Number of heterogeneous complexity experts
+    MOCE_TOP_K: 2             # Top-k experts activated per routing decision
+    MOCE_START_LAYER: 12      # Start SHMoE from this transformer layer (Stage 3)
+    MOCE_TOKEN_ROUTING: True  # [NEW] Token-level fine-grained routing (vs. image-level)
+    MOCE_ORTH_WEIGHT: 0.1     # [NEW] Expert orthogonal diversity regularization weight
+    USE_SPECTRAL_ATTN: True   # [NEW] Cross-band spectral attention in patch embedding
+  TEXT_ENCODER:
+    TYPE: ViT-L/14
+  DECODER:
+    TYPE: CENTER
+    NUM_CHANNELS: 256
+    CONV_TYPE: normal
+    XAVIER_INIT: True
+  TASK_DECODER:
+    NUM_CHANNELS: 256
+    FEATURE_TYPE: average
+  TASK_NUM: 1
+  TASK_INDEX:
+    MUSTHSI: 0
+TRAIN:
+  TYPE: text_frozen
+  ENCODER_MULTIPLIER: 0.1
+  BATCH_SIZE: 128
+  EPOCH: 10
+  GRAD_CLIP_NORM: 0.1
+  LR: 0.0001
+  LR_DROP_EPOCH: 144
+  NUM_WORKER: 20
+  OPTIMIZER: ADAMW
+  PRINT_INTERVAL: 50
+  SCHEDULER:
+    TYPE: step
+    DECAY_RATE: 0.1
+  WEIGHT_DECAY: 0.0001
+  MOCE_AUX_WEIGHT: 0.01  # MoCE auxiliary loss weight (load-balancing + orthogonal diversity)
+  SPECTRAL_CONTRASTIVE_WEIGHT: 0.05  # [NEW] Spectral contrastive loss weight
+  GIOU_WEIGHT: 2.0
+  L1_WEIGHT: 5.0
+  CE_WEIGHT: 1.0
+  TASK_CE_WEIGHT: 1.0
+TEST:
+  EPOCH: 50
+  SEARCH_FACTOR: 4.0
+  SEARCH_SIZE: 224
+  TEMPLATE_FACTOR: 2.0
+  TEMPLATE_SIZE: 112
+  WINDOW: True
+  NUM_TEMPLATES: 2
+  UPDATE_INTERVALS:
+    DEFAULT: 25
+  UPDATE_THRESHOLD:
+    DEFAULT: 0.70
+  MULTI_MODAL_VISION:
+    DEFAULT: True
+  MULTI_MODAL_LANGUAGE:
+    DEFAULT: True
+  USE_NLP:
+    DEFAULT: False
+    TNL2K: True
