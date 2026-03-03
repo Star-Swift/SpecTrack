@@ -125,6 +125,78 @@ class SUTRACK(nn.Module):
             return self.encoder.body.get_moce_aux_loss()
         return 0
 
+    def compute_spectral_contrastive_loss(self, feature, gt_gaussian_map):
+        """
+        光谱对比损失 (Spectral Contrastive Loss).
+
+        论文图1洞察：目标的光谱特征与模板相似，与背景差异显著。
+        当前训练仅有框回归损失和热力图损失，没有损失显式监督编码器利用
+        光谱特征区分目标与背景。本方法通过以下方式弥补这一不足：
+
+        - 从编码器输出中分别提取模板原型特征和搜索区域前景/背景特征
+        - 使用软 Triplet 损失约束：template_fg 与 search_fg 的余弦相似度
+          必须高于与 search_bg 的余弦相似度（margin = 0.1）
+        - 显式监督编码器学习光谱判别性特征
+
+        改进论文贡献（2）：使 SHMoE 模块学习真正的光谱语义，而不仅是
+        通用的视觉特征。
+
+        参考文献:
+        - OSTrack: One-Stream Tracking via Joint Attention (ECCV 2022)
+        - SpectralTrack: Spectral-Spatial Visual Tracking (TGRS 2023)
+        - SimCLR: A Simple Framework for Contrastive Learning (ICML 2020)
+
+        Args:
+            feature: encoder output, list [xz] where xz is [B, N, C]
+            gt_gaussian_map: [B, H, W] soft foreground heatmap at patch resolution
+        Returns:
+            scalar loss
+        """
+        xz = feature[0]  # [B, N, C]
+        B = xz.shape[0]
+
+        # --- Extract search tokens ---
+        if self.class_token:
+            search_feat = xz[:, 1:self.num_patch_x * self.num_frames + 1, :]
+        else:
+            search_feat = xz[:, :self.num_patch_x * self.num_frames, :]
+        # search_feat: [B, num_patch_x, C]
+
+        # --- Extract template tokens ---
+        start = (1 + self.num_patch_x * self.num_frames) if self.class_token else self.num_patch_x * self.num_frames
+        end = start + self.num_patch_z * self.num_template
+        template_feat = xz[:, start:end, :]  # [B, num_patch_z * num_template, C]
+
+        # Template prototype: mean of all template tokens
+        tmpl_proto = F.normalize(template_feat.mean(dim=1), dim=-1)  # [B, C]
+
+        # Foreground weights from GT heatmap
+        # gt_gaussian_map: [B, H, W] at patch resolution; H*W must equal num_patch_x
+        fg_map_norm = gt_gaussian_map.detach()
+        if fg_map_norm.reshape(B, -1).shape[1] != self.num_patch_x:
+            # Interpolate heatmap to match patch grid if resolution mismatch
+            fg_map_norm = F.interpolate(
+                fg_map_norm.unsqueeze(1), size=(self.fx_sz, self.fx_sz),
+                mode='bilinear', align_corners=False).squeeze(1)   # [B, fx_sz, fx_sz]
+        fg_weights = fg_map_norm.reshape(B, -1)   # [B, num_patch_x]
+        fg_weights = fg_weights / (fg_weights.sum(dim=1, keepdim=True) + 1e-8)
+
+        # Background weights: complement of foreground (use same resolution-matched map)
+        bg_weights = (1.0 - fg_map_norm).clamp(min=0.0).reshape(B, -1)
+        bg_weights = bg_weights / (bg_weights.sum(dim=1, keepdim=True) + 1e-8)
+
+        # Weighted aggregation to get foreground/background prototypes
+        search_fg = F.normalize(
+            (search_feat * fg_weights.unsqueeze(-1)).sum(dim=1), dim=-1)   # [B, C]
+        search_bg = F.normalize(
+            (search_feat * bg_weights.unsqueeze(-1)).sum(dim=1), dim=-1)   # [B, C]
+
+        # Soft triplet: template should be spectrally closer to target than to background
+        sim_pos = (tmpl_proto * search_fg).sum(dim=-1)   # [B]
+        sim_neg = (tmpl_proto * search_bg).sum(dim=-1)   # [B]
+        loss = F.relu(sim_neg - sim_pos + 0.1).mean()
+        return loss
+
 
 def build_sutrack(cfg):
     encoder = build_encoder(cfg)

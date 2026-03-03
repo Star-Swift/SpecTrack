@@ -258,6 +258,75 @@ class HighPassConv2d(nn.Module):
         return self.conv(x)
 
 
+class SpectralBandAttention(nn.Module):
+    """
+    跨波段光谱注意力模块 (Cross-Band Spectral Attention).
+
+    论文核心主张（图1）：多光谱图像中不同波段捕获材质相关的反射率特性，
+    这些跨波段关联是区分目标与背景的关键判别线索。
+
+    当前 ConvPatchEmbed 直接用 Conv2d 将全部波段混合投影，隐式地处理跨波段关联
+    但丢失了显式的波段间相关结构（例如：目标在近红外波段与背景的反射率差异）。
+
+    本模块在块嵌入之前对原始 in_chans 通道（波长波段）建模显式的跨波段反射率关联：
+    1. 全局波段重标定（SE 风格）：学习各波段对目标识别的贡献权重
+    2. 跨波段局部混合：通过逐通道卷积+逐点卷积捕获相邻波段之间的反射率协变模式
+
+    论文改进意义：
+    - 强化"频率感知光谱线索"的真实光谱语义，而非仅依赖空间高频特征
+    - 在特征嵌入阶段就保留波段间关联，为 SHMoE 路由器提供更准确的光谱线索
+
+    参考文献：
+    - SENet: Squeeze-and-Excitation Networks (Hu et al., CVPR 2018)
+    - Spectral–Spatial Feature Extraction for Hyperspectral Object Tracking (TGRS 2022)
+    - Band Attention Convolutional Networks for HSI Classification (TGRS 2020)
+    """
+
+    def __init__(self, in_chans: int, reduction: int = 2):
+        super().__init__()
+        mid = max(in_chans // reduction, 2)
+
+        # Global band recalibration (SE-style): learn per-band importance weights
+        self.squeeze = nn.AdaptiveAvgPool2d(1)
+        self.excitation = nn.Sequential(
+            nn.Linear(in_chans, mid, bias=False),
+            nn.GELU(),
+            nn.Linear(mid, in_chans, bias=False),
+            nn.Sigmoid()
+        )
+
+        # Cross-band mixing: depthwise captures local spatial patterns per band,
+        # pointwise mixes information across all bands to model reflectance correlations
+        self.band_conv = nn.Sequential(
+            nn.Conv2d(in_chans, in_chans, kernel_size=3, padding=1, groups=in_chans, bias=False),
+            nn.GELU(),
+            nn.Conv2d(in_chans, in_chans, kernel_size=1, bias=False),
+        )
+
+        # Layer-normalize across all bands (GroupNorm with 1 group = LayerNorm over channels)
+        # stabilizes scale differences across spectral bands
+        self.norm = nn.GroupNorm(1, in_chans)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: [B, in_chans, H, W] raw multispectral image
+        Returns:
+            [B, in_chans, H, W] spectrally-recalibrated features
+        """
+        B, C, H, W = x.shape
+
+        # Band recalibration: learn per-band importance weights from global context
+        s = self.squeeze(x).view(B, C)             # [B, C]
+        e = self.excitation(s).view(B, C, 1, 1)    # [B, C, 1, 1]
+        x_recalib = x * e                          # Recalibrate each band
+
+        # Cross-band mixing: capture reflectance co-variation across wavelengths
+        x_out = x_recalib + self.band_conv(x_recalib)
+
+        return self.norm(x_out)
+
+
 class FrequencyEmbedding(nn.Module):
     """频率嵌入：提取高频特征作为路由依据"""
     def __init__(self, dim):
@@ -1118,7 +1187,7 @@ class PatchEmbed(nn.Module):
 
 class ConvPatchEmbed(nn.Module):
     def __init__(self, search_size=224,template_size=112, patch_size=16, inner_patches=4, in_chans=8, embed_dim=128, norm_layer=None,
-                 stop_grad_conv1=False):
+                 stop_grad_conv1=False, use_spectral_attn=False):
         super().__init__()
         search_size = to_2tuple(search_size)
         template_size = to_2tuple(template_size)
@@ -1145,8 +1214,17 @@ class ConvPatchEmbed(nn.Module):
         else:
             self.norm = None
 
+        # Cross-band spectral attention: explicitly models wavelength-dependent
+        # reflectance patterns before spatial patch projection
+        self.spectral_attn = SpectralBandAttention(in_chans) if use_spectral_attn else None
+
     def forward(self, x, bool_masked_pos=None, mask_token=None):
         B, C, H, W = x.shape
+
+        # Apply cross-band spectral recalibration before spatial projection
+        if self.spectral_attn is not None:
+            x = self.spectral_attn(x)
+
         x = self.proj(x)
         if self.stop_grad_conv1:
             x = x.detach() * 0.9 + x * 0.1
@@ -1308,6 +1386,7 @@ class Fast_iTPN(nn.Module):
                  moce_start_layer=0,
                  moce_token_routing=True,
                  moce_orth_weight=0.1,
+                 use_spectral_attn=False,
                  **kwargs):
         super().__init__()
         self.search_size = search_size
@@ -1343,7 +1422,8 @@ class Fast_iTPN(nn.Module):
             self.patch_embed = ConvPatchEmbed(
                 search_size=search_size,template_size=template_size, patch_size=patch_size, in_chans=in_chans, embed_dim=mlvl_dims['4'],
                 stop_grad_conv1=stop_grad_conv1,
-                norm_layer=norm_layer if patch_norm else None)
+                norm_layer=norm_layer if patch_norm else None,
+                use_spectral_attn=use_spectral_attn)
         else:
             self.patch_embed = PatchEmbed(
                 img_size=search_size, patch_size=patch_size, in_chans=in_chans, embed_dim=mlvl_dims['4'],

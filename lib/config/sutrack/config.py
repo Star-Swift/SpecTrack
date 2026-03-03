@@ -40,6 +40,7 @@ cfg.MODEL.ENCODER.MOCE_TOP_K = 2    # 每次激活的专家数
 cfg.MODEL.ENCODER.MOCE_START_LAYER = 0  # 从第几层开始使用MoCE（Stage3内）
 cfg.MODEL.ENCODER.MOCE_TOKEN_ROUTING = True  # 是否启用token级别细粒度路由（vs. 图像级路由）
 cfg.MODEL.ENCODER.MOCE_ORTH_WEIGHT = 0.1    # 专家正交多样性正则化权重
+cfg.MODEL.ENCODER.USE_SPECTRAL_ATTN = False  # 是否启用跨波段光谱注意力（论文改进）
 
 # MODEL.DECODER
 cfg.MODEL.DECODER = edict()
@@ -70,6 +71,7 @@ cfg.TRAIN.GIOU_WEIGHT = 2.0
 cfg.TRAIN.L1_WEIGHT = 5.0
 cfg.TRAIN.TASK_CE_WEIGHT = 1.0
 cfg.TRAIN.MOCE_AUX_WEIGHT = 0.01  # MoCE辅助损失权重
+cfg.TRAIN.SPECTRAL_CONTRASTIVE_WEIGHT = 0.0  # 光谱对比损失权重（0=禁用）
 cfg.TRAIN.PRINT_INTERVAL = 50 # interval to print the training log
 cfg.TRAIN.GRAD_CLIP_NORM = 0.1
 cfg.TRAIN.FIX_BN = False

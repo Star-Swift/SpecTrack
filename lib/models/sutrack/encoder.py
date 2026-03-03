@@ -68,6 +68,7 @@ class Encoder(EncoderBase):
                 moce_start_layer=getattr(cfg.MODEL.ENCODER, 'MOCE_START_LAYER', 0),
                 moce_token_routing=getattr(cfg.MODEL.ENCODER, 'MOCE_TOKEN_ROUTING', True),
                 moce_orth_weight=getattr(cfg.MODEL.ENCODER, 'MOCE_ORTH_WEIGHT', 0.1),
+                use_spectral_attn=getattr(cfg.MODEL.ENCODER, 'USE_SPECTRAL_ATTN', False),
             )
             if "itpnb" in name:
                 num_channels = 512

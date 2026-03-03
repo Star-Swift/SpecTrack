@@ -55,6 +55,7 @@ MODEL:
     MOCE_START_LAYER: 12      # Start SHMoE from this transformer layer (Stage 3)
     MOCE_TOKEN_ROUTING: True  # [NEW] Token-level fine-grained routing (vs. image-level)
     MOCE_ORTH_WEIGHT: 0.1     # [NEW] Expert orthogonal diversity regularization weight
+    USE_SPECTRAL_ATTN: True   # [NEW] Cross-band spectral attention in patch embedding
   TEXT_ENCODER:
     TYPE: ViT-L/14
   DECODER:
@@ -84,6 +85,7 @@ TRAIN:
     DECAY_RATE: 0.1
   WEIGHT_DECAY: 0.0001
   MOCE_AUX_WEIGHT: 0.01  # MoCE auxiliary loss weight (load-balancing + orthogonal diversity)
+  SPECTRAL_CONTRASTIVE_WEIGHT: 0.05  # [NEW] Spectral contrastive loss weight
   GIOU_WEIGHT: 2.0
   L1_WEIGHT: 5.0
   CE_WEIGHT: 1.0
