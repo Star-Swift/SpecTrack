@@ -107,6 +107,30 @@ lib/train/admin/local.py
 lib/test/evaluation/local.py
 ```
 
+## Released Checkpoint
+
+The recommended public MUSTHSI checkpoint is the B224 model:
+
+| Config | File | Baidu Drive | Code | SHA256 |
+| --- | --- | --- | --- | --- |
+| `spectrack_b224_must_ihmoe.yaml` | `SPECTRACK_b224_must.pth.tar` | [download](https://pan.baidu.com/s/1Dcl-Op6Cx_SSLCC7hMINww?pwd=6zjt) | `6zjt` | `cefafac15ceccd87f1f88deba3a6a2aa714141a326b252e699959e68687795c7` |
+
+Place it under the default checkpoint directory and rename it to the epoch-based filename used by the launcher:
+
+```bash
+mkdir -p checkpoints/train/spectrack/spectrack_b224_must_ihmoe
+mv SPECTRACK_b224_must.pth.tar \
+  checkpoints/train/spectrack/spectrack_b224_must_ihmoe/SPECTRACK_ep0023.pth.tar
+```
+
+Alternatively, keep the downloaded filename and pass it explicitly:
+
+```bash
+SPECTRACK_CHECKPOINT=/path/to/SPECTRACK_b224_must.pth.tar \
+EPOCH=23 \
+bash tracking/run_spectrack_b224.sh eval
+```
+
 ## Quick Check
 
 Before training, verify the config, dataset paths, and pretrained files:
