@@ -153,7 +153,7 @@ checkpoints/train/spectrack/<config>/SPECTRACK_epXXXX.pth.tar
 For example:
 
 ```text
-checkpoints/train/spectrack/spectrack_b224_must_ihmoe/SPECTRACK_ep0050.pth.tar
+checkpoints/train/spectrack/spectrack_b224_must_ihmoe/SPECTRACK_ep0023.pth.tar
 ```
 
 ## Evaluation
@@ -161,20 +161,20 @@ checkpoints/train/spectrack/spectrack_b224_must_ihmoe/SPECTRACK_ep0050.pth.tar
 Evaluate a trained checkpoint with the matching script:
 
 ```bash
-EPOCH=50 bash tracking/run_spectrack_b224.sh eval
+bash tracking/run_spectrack_b224.sh eval
 ```
 
 Useful overrides:
 
 ```bash
-DATASET=MUSTHSI EPOCH=50 THREADS=8 GPU=0 bash tracking/run_spectrack_b224.sh eval
+DATASET=MUSTHSI EPOCH=23 THREADS=8 GPU=0 bash tracking/run_spectrack_b224.sh eval
 ```
 
 If the checkpoint is stored outside the default checkpoint directory, pass it through `SPECTRACK_CHECKPOINT`:
 
 ```bash
-SPECTRACK_CHECKPOINT=/path/to/SPECTRACK_ep0050.pth.tar \
-EPOCH=50 \
+SPECTRACK_CHECKPOINT=/path/to/SPECTRACK_ep0023.pth.tar \
+EPOCH=23 \
 bash tracking/run_spectrack_b224.sh eval
 ```
 

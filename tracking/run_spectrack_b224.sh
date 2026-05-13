@@ -10,7 +10,7 @@ CONFIG="${CONFIG:-spectrack_b224_must_ihmoe}"
 DATASET="${DATASET:-MUSTHSI}"
 GPU="${GPU:-0}"
 THREADS="${THREADS:-4}"
-EPOCH="${EPOCH:-50}"
+EPOCH="${EPOCH:-23}"
 MODE="${1:-train}"
 
 export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
