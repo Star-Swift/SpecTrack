@@ -74,6 +74,32 @@ pretrained/
     fast_itpn_large_1600e_1k.pt
 ```
 
+Download the Fast-iTPN pretrained backbones from the official iTPN model zoo and place them under `pretrained/itpn/`:
+
+| SpecTrack config | Required file | Google Drive | Baidu Drive |
+| --- | --- | --- | --- |
+| `spectrack_t224_must_ihmoe.yaml` | `fast_itpn_tiny_1600e_1k.pt` | [download](https://drive.google.com/file/d/1Ze9RkJggxxi58Dl7sqWrf2TNOSnRK4Wi/view?usp=sharing) | [download](https://pan.baidu.com/s/1H6vYLmG2pUAvL7uD7plxTQ?pwd=itpn) |
+| `spectrack_b224_must_ihmoe.yaml` | `fast_itpn_base_clipl_e1600.pt` | [download](https://drive.google.com/file/d/1ADXPV95XpWb1ROMCih1n3AD52fGdr8C_/view?usp=sharing) | [download](https://pan.baidu.com/s/1R-FfMAx-wmIUSJR-JUVnVw?pwd=itpn) |
+| `spectrack_l224_must_ihmoe.yaml` | `fast_itpn_large_1600e_1k.pt` | [download](https://drive.google.com/file/d/16uybbJ23Fp7lnGNYL5I198glHGhwn_y2/view?usp=sharing) | [download](https://pan.baidu.com/s/1wbnbBkjHIUgHS_1okxMHCg?pwd=itpn) |
+
+Baidu extraction code: `itpn`.
+
+Command-line download with Google Drive:
+
+```bash
+mkdir -p pretrained/itpn
+pip install gdown
+
+gdown --id 1Ze9RkJggxxi58Dl7sqWrf2TNOSnRK4Wi \
+  -O pretrained/itpn/fast_itpn_tiny_1600e_1k.pt
+
+gdown --id 1ADXPV95XpWb1ROMCih1n3AD52fGdr8C_ \
+  -O pretrained/itpn/fast_itpn_base_clipl_e1600.pt
+
+gdown --id 16uybbJ23Fp7lnGNYL5I198glHGhwn_y2 \
+  -O pretrained/itpn/fast_itpn_large_1600e_1k.pt
+```
+
 Generated local path files are ignored by Git:
 
 ```text
